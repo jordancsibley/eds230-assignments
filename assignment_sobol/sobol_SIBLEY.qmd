@@ -1,0 +1,140 @@
+---
+title: "Sobol Assignment - EDS 230"
+date: "2025-05-02"
+author: "Jordan Sibley"
+execute: 
+  eval: true
+  message: false
+  warning: false
+format:
+  html:
+    toc: true
+---
+
+## Set Up
+
+```{r}
+# Libraries 
+library(here)
+library(sensitivity)
+library(purrr)
+library(tidyverse)
+
+# Atmospheric conductance function 
+source(here("assignment_sobol", "Catm.R"))
+```
+
+## Part 1: Sensitivity analysis review 
+
+Paper selection: *Sobol sensitivity analysis for risk assessment of uranium in groundwater* 
+
+This paper outlines a sensitivity analysis of a study that determines the human health impact due to uranium exposure using a Sobol approach. In the analysis, the relative importance of each input was conducted, different sample sizes were used to test the optimal Sobol sensitivity indices, and three types of effects were evaluated: first order effects, second-order effects, and total effect. The results of the Sobol analysis (from viewing the first order effects) showed that the concentration of uranium was the most sensitive input, then followed by intake rate and exposure frequency. The second order effects shows that the interaction of uranium and intake rate is the most sensitive input parameter. In terms of applying these results to the real world, this could mean prioritizing response clean ups in areas with high uranium concentrations in order to protect against human health impacts. 
+
+## Part 2: Atmospheric conductance sensitivity analysis 
+
+#### a. Use the Sobol approach to generate parameter values for the 4 parameters
+
+```{r}
+# Generate parameter values for 4 parameters of model 
+np <- 1000
+k_o <- rnorm(mean = 0.1, sd = 0.1 * 0.01, n = np)
+k_d <- rnorm(mean = 0.7, sd = 0.7 * 0.01, n = np)
+v <- rnorm(mean = 300, sd = 50, n = np)
+height <- runif(min = 3.5, max = 5.5, n = np)
+
+# Bind generated values into dataframe 
+X1 <- cbind.data.frame(k_o, k_d, v, height = height)
+
+
+# Repeat sampling using same values 
+np <- 1000
+k_o <- rnorm(mean = 0.1, sd = 0.1 * 0.01, n = np)
+k_d <- rnorm(mean = 0.7, sd = 0.7 * 0.01, n = np)
+v <- rnorm(mean = 300, sd = 50, n = np)
+height <- runif(min = 3.5, max = 5.5, n = np)
+
+# Bind generated values into dataframe 
+X2 <- cbind.data.frame(k_o, k_d, v, height = height)
+
+# Generate sobol indices using sobolSalt 
+sens_Catm_Sobol <- sobolSalt(model = NULL, X1, X2, nboot = 100)
+```
+
+#### b. Run the atmospheric conductance model for these parameters
+
+```{r}
+# Run model using generated parameters 
+parameters <- as.data.frame(sens_Catm_Sobol$X)
+
+# Name columns using parameters names 
+colnames(parameters) <- colnames(X1)
+
+# Get results of function 
+results <- pmap_dbl(parameters, Catm)
+
+# Run senstivity analysis 
+sens_Catm_Sobol <- sensitivity::tell(sens_Catm_Sobol, results, results.names = "ga")
+
+
+# First-order (main) Sobol indices: quantify the individual effect of each parameter on the output variance,
+# ignoring interactions with other parameters. These indices typically sum to less than or about 1.
+sens_Catm_Sobol$S
+
+# Assign parameter names as row names
+row.names(sens_Catm_Sobol$S) <- colnames(parameters) # add row names back in 
+sens_Catm_Sobol$S # most important param is likely k_d
+
+# Total Sobol indices: capture the full contribution of each parameter to output variance,
+# including interactions with other parameters
+row.names(sens_Catm_Sobol$T) <- colnames(parameters) # add row names back in 
+sens_Catm_Sobol$T # larger than main effect 
+
+# Compare first-order and total indices to assess each parameter's individual and interactive contributions to model output
+print(sens_Catm_Sobol)
+```
+
+#### c. Plot conductance estimates in a way that accounts for parameter uncertainty
+
+```{r}
+# Combine parameter samples with model output
+both <- cbind.data.frame(parameters, output = sens_Catm_Sobol$y)
+
+# Plot distribution of conductance estimates, showing uncertainty from input parameters
+ggplot(both, aes(x = output)) +
+  geom_histogram(bins = 50, fill = "steelblue", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = mean(both$output), color = "cyan", linetype = "dashed") +
+  labs(
+    title = "Distribution of Atmospheric Conductance Estimates",
+    subtitle = "Includes uncertainty from parameter sampling",
+    x = "Conductance estimate (model output)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+#### d. Plot conductance estimates against windspeed use the parameter that is 2nd in terms of total effect on response
+
+From the results of `sens_Catm_Sobol`, I have identified that vegetation height is 2nd in terms of total effect on response, followed by k_o and k_d.
+
+```{r}
+# Plot conductance against wind speed colored by vegetation height 
+ggplot(both, aes(x=v, y=output, color = height)) +
+  geom_point() + 
+  labs(x = "Wind speed (m/s)",
+       y = "Conductance estimates (mm/s)", 
+       color = "Vegetation \n height (m)"
+  )
+```
+
+#### e. Estimate the Sobol Indices for your output
+
+```{r}
+# View Sobol Indices that were estimated above
+print(sens_Catm_Sobol)
+```
+
+#### f. Comment on what this tells you about how atmospheric conductance
+
+The results of the Sobol sensitivity analysis show that wind speed is the most influential parameter in determining atmospheric conductance. Looking at the first order indices, the variation in wind speed alone explains about 81% of the variance in conductance estimates. Vegetation height follows wind speed and accounts for 22% of the variation, and the other parameters, roughness and zero plane displacement, are far less influential and only account for \~ 4% of the variation in atmospheric conductance. Based on the plot above, it shows that wind speed and atmospheric conductance are positively correlated. Additionally, with every step in wind speed, the conductance estimate increases as vegetation height increases.
+
+In the class example, we had lower and more consistent wind speeds, and taller vegetation. In that case, wind speed didn’t matter as much because it didn’t change much, and the tall vegetation reduced how much wind could affect the system. But in this case, small changes in wind speed cause much bigger changes in conductance. So, the model is much more sensitive to wind speed.
