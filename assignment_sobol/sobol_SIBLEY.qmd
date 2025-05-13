@@ -9,6 +9,7 @@ execute:
 format:
   html:
     toc: true
+embed-resources: true
 ---
 
 ## Set Up
